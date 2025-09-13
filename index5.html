@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Capstone E-Commerce — Single File</title>
+<meta name="description" content="Capstone E-Commerce demo: product listing, cart, lazy images, responsive and cross-browser friendly." />
+
+<!-- Minimal, optimized CSS (kept readable for learning) -->
+<style>
+  :root{
+    --bg:#f2f8f6; --card:#fff; --muted:#64748b; --accent:#2563eb;
+    --max-width:1100px; --radius:12px; --shadow: 0 6px 18px rgba(2,6,23,0.06);
+    --gap:12px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial;
+    background:linear-gradient(180deg,#ffb6c1 0%,#ffb4c1 100%);color:#06202a;
+    -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+  }
+
+  .container{max-width:var(--max-width);margin:20px auto;padding:16px}
+  .header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+  .brand{font-weight:700;font-size:1.25rem}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .filterBar{display:flex;gap:8px;align-items:center}
+  input[type="search"], select{padding:8px 10px;border-radius:8px;border:1px solid #e6eef8;background:white}
+  button{cursor:pointer}
+  .cartBtn{background:var(--accent);color:white;border:0;padding:8px 12px;border-radius:10px}
+  main{margin-top:18px}
+
+  /* Product grid */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:var(--gap)}
+  .card{background:var(--card);padding:12px;border-radius:var(--radius);box-shadow:var(--shadow);display:flex;flex-direction:column}
+  .thumb{width:100%;height:160px;border-radius:8px;object-fit:cover;background:#f1f5f9;border:1px solid #f3f7fb}
+  .title{font-weight:600;margin-top:8px;font-size:0.95rem}
+  .muted{color:var(--muted);font-size:0.85rem}
+  .price{font-weight:700}
+  .cardRow{display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px}
+
+  /* Quick cart floating box */
+  .quickCart{position:fixed;right:16px;bottom:16px;background:var(--card);padding:12px;border-radius:12px;box-shadow:0 8px 20px rgba(2,6,23,0.08);min-width:220px}
+  .quickCart h4{margin:0 0 8px 0;font-size:1rem}
+  .cartItem{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:0.95rem}
+
+  /* Modal */
+  .modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(2,6,23,0.45);padding:16px}
+  .modalCard{background:palevioletred;border-radius:12px;padding:16px;max-width:760px;width:100%;box-shadow:var(--shadow)}
+  .modalImg{width:100%;height:320px;object-fit:cover;border-radius:8px}
+
+  /* Responsive tweaks */
+  @media (max-width:640px){
+    .thumb{height:140px}
+    .header{align-items:flex-start}
+    .modalImg{height:220px}
+  }
+
+  /* Small utility */
+  .smallBtn{padding:6px 8px;border-radius:8px;border:1px solid #e6eef8;background:greenyellow}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+</style>
+</head>
+<body>
+<div class="container" role="application" aria-label="Capstone e-commerce app">
+  <header class="header">
+    <div class="brand">Capstone E-Commerce</div>
+
+    <div class="controls" aria-hidden="false">
+      <div class="filterBar" role="search" aria-label="Search and filters">
+        <label class="sr-only" for="q">Search products</label>
+        <input id="q" type="search" placeholder="Search products..." aria-label="Search products" />
+
+        <label class="sr-only" for="cat">Category</label>
+        <select id="cat" aria-label="Filter by category">
+          <option value="All">All</option>
+        </select>
+
+        <label class="sr-only" for="sort">Sort</label>
+        <select id="sort" aria-label="Sort products">
+          <option value="popular">Popular</option>
+          <option value="price-asc">Price: Low → High</option>
+          <option value="price-desc">Price: High → Low</option>
+        </select>
+      </div>
+
+      <button id="openCart" class="cartBtn" aria-label="Open cart">Cart (0) — $0.00</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="grid" class="grid" aria-live="polite" aria-label="Products"></section>
+  </main>
+</div>
+
+<!-- Quick cart -->
+<aside class="quickCart" id="quickCart" aria-label="Quick cart">
+  <h4>Quick Cart</h4>
+  <div id="cartContents"><div style="color:var(--muted)">Cart is empty</div></div>
+  <div style="margin-top:10px;font-weight:700">Total: $<span id="cartTotal">0.00</span></div>
+</aside>
+
+<!-- Modal container -->
+<div id="modalRoot" aria-hidden="true"></div>
+
+<!-- Script: product data, rendering, lazy loading, cart, etc. -->
+<script>
+/*
+  Single-file Capstone App
+  - Vanilla JS (no frameworks)
+  - Lazy image loading: IntersectionObserver + loading="lazy" fallback
+  - Cart persisted in localStorage
+  - Debounced search
+  - Feature detection + graceful fallbacks for cross-browser compatibility
+*/
+
+/* ---------- Sample product data ---------- */
+/* In a real app, fetch from an API; here we use static data so the file is self-contained */
+const PRODUCTS = [
+  {id:1, title:'Vintage Camera', price:119.00, category:'Electronics', image:'https://www.bing.com/th/id/OIP.PEPllgoxNZ2nELuUF3vx5QHaE4?w=261&h=211&c=8&rs=1&qlt=90&o=6&dpr=1.3&pid=3.1&rm=2'},
+  {id:2, title:'Stylish Backpack', price:79.50, category:'Accessories', image:'https://tse3.mm.bing.net/th/id/OIP.buY8kAGzPsScdxVxNx2YtgHaHa?rs=1&pid=ImgDetMain&o=7&rm=3'},
+  {id:3, title:'Running Sneakers', price:99.99, category:'Footwear', image:'https://th.bing.com/th/id/OIP.0IF46Fk719yTmkZKC8nJVQHaE8?w=251&h=180&c=7&r=0&o=7&dpr=1.3&pid=1.7&rm=3'},
+  {id:4, title:'Classic Sunglasses', price:49.99, category:'Accessories', image:'https://th.bing.com/th?q=Silver+Sunglasses+Color&w=120&h=120&c=1&rs=1&qlt=70&o=7&cb=1&dpr=1.3&pid=InlineBlock&rm=3&mkt=en-IN&cc=IN&setlang=en&adlt=moderate&t=1&mw=247'},
+  {id:5, title:'Leather Wallet', price:39.90, category:'Accessories', image:'https://th.bing.com/th/id/OIP.RoD9HcaJSLkipp8SP4mMwAHaEK?w=294&h=150&c=6&o=7&dpr=1.3&pid=1.7&rm=3'},
+  {id:6, title:'Wireless Headphones', price:129.00, category:'Electronics', image:'https://th.bing.com/th/id/OIP.FCB33TXqP_3eepbjjans_AHaHa?w=179&h=180&c=7&r=0&o=7&dpr=1.3&pid=1.7&rm=3'},
+  {id:7, title:'Desk Lamp', price:29.99, category:'Home', image:'https://th.bing.com/th/id/OIP.cG2tpDJDd7hg0yn5hH93QwHaHa?w=218&h=218&c=7&r=0&o=7&dpr=1.3&pid=1.7&rm=3'},
+  {id:9, title:'Notebook', price:8.75, category:'Stationery', image:'https://th.bing.com/th/id/R.831fa989a81056308f57aea5f3c2f28e?rik=Ni%2fKrW8dyEh%2ffw&riu=http%3a%2f%2fpngimg.com%2fuploads%2fnotebook%2fnotebook_PNG19225.png&ehk=a9kX%2bwFYesg2KDYf8Vb58TNrrjwrL%2bpvcS%2brPrZtfew%3d&risl=&pid=ImgRaw&r=0'},
+  {id:10, title:'Insulated Bottle', price:24.00, category:'Home', image:'https://th.bing.com/th/id/OIP.c1CFwp2tuIYIC1C2G8hNhAHaHa?w=219&h=219&c=7&r=0&o=7&dpr=1.3&pid=1.7&rm=3'},
+  {id:12, title:'Potted Plant', price:15.00, category:'Home', image:'https://th.bing.com/th/id/OIP.Ct3DrXjLPrVXf-w7nkvD3AHaI4?w=157&h=188&c=7&r=0&o=7&dpr=1.3&pid=1.7&rm=3'}
+];
+
+/* ---------- State & DOM references ---------- */
+const grid = document.getElementById('grid');
+const qInput = document.getElementById('q');
+const catSelect = document.getElementById('cat');
+const sortSelect = document.getElementById('sort');
+const cartBtn = document.getElementById('openCart');
+const quickCartEl = document.getElementById('cartContents');
+const cartTotalEl = document.getElementById('cartTotal');
+const modalRoot = document.getElementById('modalRoot');
+
+/* Cart stored as { productId: count } */
+let cart = (function(){ try{ return JSON.parse(localStorage.getItem('capstone_cart')||'{}') }catch(e){return {}} })();
+
+/* Debounce utility */
+function debounce(fn, wait){ let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), wait); }; }
+
+/* IntersectionObserver for lazy images (if supported) */
+let io = null;
+if ('IntersectionObserver' in window) {
+  io = new IntersectionObserver((entries, obs) => {
+    entries.forEach(en => {
+      if(en.isIntersecting){
+        const img = en.target;
+        const src = img.dataset.src;
+        if(src){ img.src = src; img.removeAttribute('data-src'); }
+        obs.unobserve(img);
+      }
+    });
+  }, {rootMargin: '200px'});
+}
+
+/* Populate categories */
+(function populateCategories(){
+  const cats = ['All', ...Array.from(new Set(PRODUCTS.map(p=>p.category)))];
+  cats.forEach(c=>{
+    const opt = document.createElement('option');
+    opt.value = c; opt.textContent = c;
+    catSelect.appendChild(opt);
+  });
+})();
+
+/* Render helpers */
+function money(n){ return Number(n).toFixed(2); }
+
+/* Render grid based on filter/sort */
+function renderGrid({query='', category='All', sort='popular'} = {}) {
+  // Filter
+  let list = PRODUCTS.filter(p => (category==='All' || p.category === category));
+  if(query) {
+    const q = (query || '').toLowerCase();
+    list = list.filter(p => p.title.toLowerCase().includes(q) || p.category.toLowerCase().includes(q));
+  }
+  // Sort
+  if(sort === 'price-asc') list.sort((a,b)=>a.price-b.price);
+  if(sort === 'price-desc') list.sort((a,b)=>b.price-a.price);
+  // Clear grid efficiently
+  grid.innerHTML = '';
+  const fragment = document.createDocumentFragment();
+
+  list.forEach(p=>{
+    const art = document.createElement('article');
+    art.className = 'card';
+    art.innerHTML = `
+      <img class="thumb" data-src="${p.image}" alt="${escapeHtml(p.title)}" loading="lazy" />
+      <div class="title">${escapeHtml(p.title)}</div>
+      <div class="muted">${escapeHtml(p.category)}</div>
+      <div class="cardRow">
+        <div class="price">$${money(p.price)}</div>
+        <div style="display:flex;gap:8px">
+          <button class="smallBtn" data-id="${p.id}" data-action="details">Details</button>
+          <button class="cartBtn" data-id="${p.id}" data-action="add">Add</button>
+        </div>
+      </div>
+    `;
+    fragment.appendChild(art);
+  });
+  grid.appendChild(fragment);
+
+  // Observe images for lazy loading (IntersectionObserver) or set src if not supported
+  const imgs = grid.querySelectorAll('img[data-src]');
+  imgs.forEach(img => {
+    if(io) {
+      io.observe(img);
+    } else {
+      // Fallback: set src immediately (or rely on loading="lazy")
+      img.src = img.dataset.src;
+      img.removeAttribute('data-src');
+    }
+  });
+}
+
+/* Escape HTML to avoid injection when rendering titles (defensive) */
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+}
+
+/* Update cart UI & persist */
+function updateCartUI(){
+  // Update cart button count and total
+  const count = Object.values(cart).reduce((a,b)=>a+b,0);
+  const total = Object.entries(cart).reduce((sum,[id,cnt])=>{
+    const p = PRODUCTS.find(x=>String(x.id)===String(id));
+    return p ? sum + p.price * cnt : sum;
+  },0);
+  cartBtn.textContent = `Cart (${count}) — $${money(total)}`;
+  cartTotalEl.textContent = money(total);
+
+  // Update quick cart listing
+  quickCartEl.innerHTML = '';
+  if(count === 0){
+    quickCartEl.innerHTML = `<div style="color:var(--muted)">Cart is empty</div>`;
+  } else {
+    Object.entries(cart).forEach(([id,cnt])=>{
+      const p = PRODUCTS.find(x=>String(x.id)===String(id));
+      if(!p) return;
+      const wrap = document.createElement('div');
+      wrap.className = 'cartItem';
+      wrap.innerHTML = `<div>${escapeHtml(p.title)} × ${cnt}</div>
+        <div style="display:flex;gap:6px">
+          <button class="smallBtn" data-id="${p.id}" data-action="increase">+</button>
+          <button class="smallBtn" data-id="${p.id}" data-action="remove">🗑</button>
+        </div>`;
+      quickCartEl.appendChild(wrap);
+    });
+  }
+  try { localStorage.setItem('capstone_cart', JSON.stringify(cart)); } catch(e){}
+}
+
+/* Cart operations */
+function addToCart(id, qty=1){
+  id = String(id);
+  cart[id] = (cart[id] || 0) + qty;
+  updateCartUI();
+}
+function removeFromCart(id){
+  id = String(id);
+  delete cart[id];
+  updateCartUI();
+}
+function increaseCart(id){
+  id = String(id);
+  cart[id] = (cart[id] || 0) + 1;
+  updateCartUI();
+}
+
+/* Details modal (simple) */
+function openDetails(product){
+  modalRoot.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(product.title)} details">
+      <div class="modalCard">
+        <h2 style="margin:0 0 8px 0">${escapeHtml(product.title)}</h2>
+        <img class="modalImg" src="${product.image}" alt="${escapeHtml(product.title)}" />
+        <p class="muted">Category: ${escapeHtml(product.category)}</p>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
+          <div style="font-weight:700">$${money(product.price)}</div>
+          <div style="display:flex;gap:8px">
+            <button class="cartBtn" id="modalAdd">Add to cart</button>
+            <button class="smallBtn" id="modalClose">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  modalRoot.setAttribute('aria-hidden', 'false');
+
+  // Event listeners
+  document.getElementById('modalClose').addEventListener('click', closeModal);
+  document.getElementById('modalAdd').addEventListener('click', ()=>{
+    addToCart(product.id);
+    closeModal();
+  });
+  // Close when clicking outside the card
+  const modalOverlay = modalRoot.querySelector('.modal');
+  modalOverlay.addEventListener('click', (e)=>{ if(e.target === modalOverlay) closeModal(); });
+}
+function closeModal(){ modalRoot.innerHTML = ''; modalRoot.setAttribute('aria-hidden', 'true'); }
+
+/* Event delegation for grid and cart */
+document.addEventListener('click', function(e){
+  const action = e.target && e.target.dataset && e.target.dataset.action;
+  if(action){
+    const id = e.target.dataset.id;
+    if(action === 'add') { addToCart(id); }
+    else if(action === 'details'){ const p = PRODUCTS.find(x=>String(x.id)===String(id)); if(p) openDetails(p); }
+    else if(action === 'increase'){ increaseCart(id); }
+    else if(action === 'remove'){ removeFromCart(id); }
+  }
+});
+
+/* Cart open (could be expanded to drawer) */
+cartBtn.addEventListener('click', ()=>{ alert('Cart drawer would open in production. Use Quick Cart to interact.'); });
+
+/* Search + filters + sort wiring with debounced search for performance */
+const applyFilters = debounce(()=> {
+  renderGrid({ query: qInput.value.trim(), category: catSelect.value, sort: sortSelect.value });
+}, 180);
+
+qInput.addEventListener('input', applyFilters);
+catSelect.addEventListener('change', applyFilters);
+sortSelect.addEventListener('change', applyFilters);
+
+/* Keyboard accessibility: Enter on focused product launches details */
+grid.addEventListener('keydown', (e)=>{
+  if(e.key === 'Enter'){
+    const btn = e.target.querySelector && e.target.querySelector('[data-action="details"]');
+    if(btn) btn.click();
+  }
+});
+
+/* Initial render */
+renderGrid({query:'', category:'All', sort:'popular'});
+updateCartUI();
+
+/* Basic accessibility focus management: focus search on load */
+qInput.focus();
+
+/* ---------- Helpful, low-overhead progressive enhancements ---------- */
+
+/* 1) Prefer serving smaller images for mobile with srcset — create example attributes dynamically */
+(function addResponsiveSrcsets(){
+  // For simplicity use picsum URLs with different sizes; in production use properly cropped/responsive images
+  document.querySelectorAll('img[data-src]').forEach(img=>{
+    try{
+      const base = img.dataset.src || '';
+      if(base.includes('picsum.photos')){
+        // Build srcset (small, medium, large)
+        const seed = base.match(/seed\/([^/]+)/);
+        const id = seed ? seed[1] : 'ecom';
+        img.dataset.src = base; // keep as-is for IO
+        img.setAttribute('data-srcset', `https://picsum.photos/seed/${id}/400/300 400w, https://picsum.photos/seed/${id}/800/600 800w, https://picsum.photos/seed/${id}/1200/900 1200w`);
+        img.setAttribute('sizes', '(max-width:600px) 95vw, 220px');
+      }
+    }catch(e){}
+  });
+})();
+
+/* When IntersectionObserver loads the image, also set srcset if present */
+if(io){
+  const originalObserve = io.observe.bind(io);
+  io.observe = function(node){
+    // attach a load handler that will set srcset when src set
+    const onAttrChange = function() {
+      const src = node.getAttribute('src');
+      if(src){
+        const srcset = node.getAttribute('data-srcset');
+        if(srcset) node.setAttribute('srcset', srcset);
+        node.removeEventListener('load', onAttrChange);
+      }
+    };
+    node.addEventListener('load', onAttrChange);
+    originalObserve(node);
+  };
+}
+
+/* Polyfill hint: If you need to support older browsers (IE11) you'd include small polyfills:
+   - fetch, Promise, Object.assign, Array.from; IntersectionObserver polyfill for lazy-loading.
+   But modern evergreen browsers (Chrome, Firefox, Safari, Edge) support the features we used.
+*/
+
+/* Simple feature-detection note printed to console for devs */
+(function featureReport(){
+  console.info('Capstone app features: IntersectionObserver=', !!window.IntersectionObserver, ', loading.lazy supported=', 'loading' in HTMLImageElement.prototype);
+})();
+</script>
+</body>
+</html>
